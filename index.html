@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#4f46e5">
+<title>照片排序器</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  :root{--acc:#4f46e5;--acc2:#6366f1;--bg:#f4f5f8;--card:#fff;--txt:#1c2030;--sub:#7a8090;--line:#e6e8ee;}
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0e1016;--card:#1a1d27;--txt:#eef0f5;--sub:#8a90a2;--line:#2a2e3a;}
+  }
+  html,body{height:100%;}
+  body{background:var(--bg);color:var(--txt);font-family:-apple-system,"PingFang TC","Microsoft JhengHei",Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden;}
+  header{position:sticky;top:0;z-index:50;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;
+    padding:calc(14px + env(safe-area-inset-top)) 16px 14px;box-shadow:0 4px 20px rgba(79,70,229,.28);}
+  header h1{font-size:19px;font-weight:800;letter-spacing:.5px;display:flex;align-items:center;gap:8px;}
+  header .sub{font-size:12px;opacity:.9;margin-top:3px;}
+  .wrap{max-width:900px;margin:0 auto;padding:14px 14px calc(120px + env(safe-area-inset-bottom));}
+
+  .bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .btn{flex:1;min-width:120px;border:none;border-radius:14px;padding:13px 14px;font-size:15px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;transition:transform .08s,background .2s;}
+  .btn:active{transform:scale(.97);}
+  .btn.primary{background:var(--acc);color:#fff;box-shadow:0 6px 18px rgba(79,70,229,.35);}
+  .btn.ghost{background:var(--card);color:var(--txt);border:1px solid var(--line);flex:0 0 auto;min-width:0;padding:13px 16px;}
+  .btn.ghost.danger{color:#e5484d;}
+
+  #empty{text-align:center;color:var(--sub);padding:70px 20px;line-height:1.9;}
+  #empty .big{font-size:52px;margin-bottom:10px;}
+  #empty .t{font-size:15px;font-weight:600;color:var(--txt);}
+
+  #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;}
+  .card{position:relative;background:var(--card);border-radius:16px;overflow:hidden;border:1px solid var(--line);
+    box-shadow:0 2px 10px rgba(0,0,0,.05);touch-action:manipulation;user-select:none;}
+  .card.placeholder{opacity:.28;}
+  .card .imgbox{position:relative;width:100%;aspect-ratio:1/1;background:#0002;overflow:hidden;}
+  .card img{width:100%;height:100%;object-fit:cover;display:block;image-orientation:from-image;pointer-events:none;}
+  .card .num{position:absolute;top:8px;left:8px;min-width:30px;height:30px;padding:0 8px;border-radius:15px;
+    background:var(--acc);color:#fff;font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 8px rgba(0,0,0,.35);font-variant-numeric:tabular-nums;}
+  .card .del{position:absolute;top:6px;right:6px;width:28px;height:28px;border:none;border-radius:50%;
+    background:rgba(0,0,0,.55);color:#fff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .card .del:active{background:#e5484d;}
+  .card .meta{display:flex;align-items:center;gap:8px;padding:8px 6px 8px 10px;}
+  .card .name{flex:1;font-size:11px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .card .handle{flex:0 0 auto;padding:7px 11px;border-radius:9px;background:var(--bg);color:var(--sub);
+    font-size:13px;font-weight:700;cursor:grab;touch-action:none;display:flex;align-items:center;gap:5px;}
+  .card .handle:active{cursor:grabbing;background:var(--acc);color:#fff;}
+  .card .handle .grip{letter-spacing:-2px;font-size:16px;}
+
+  /* 拖曳中跟著手指的分身 */
+  .drag-clone{position:fixed;z-index:9999;margin:0;pointer-events:none;
+    box-shadow:0 18px 50px rgba(0,0,0,.4);transform:scale(1.05);border-radius:16px;opacity:.96;}
+
+  /* 提示 toast */
+  #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+    background:#111;color:#fff;padding:11px 20px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .25s;z-index:9998;box-shadow:0 8px 30px rgba(0,0,0,.4);}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  .hint{margin-top:16px;font-size:12px;color:var(--sub);text-align:center;line-height:1.7;}
+
+  /* 放大檢視 */
+  #lightbox{position:fixed;inset:0;z-index:9997;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;padding:20px;}
+  #lightbox.show{display:flex;}
+  #lightbox img{max-width:100%;max-height:100%;border-radius:10px;image-orientation:from-image;}
+  #lightbox .lbnum{position:fixed;top:calc(16px + env(safe-area-inset-top));left:16px;background:var(--acc);color:#fff;
+    padding:6px 14px;border-radius:20px;font-weight:800;font-size:15px;}
+  #lightbox .lbclose{position:fixed;top:calc(12px + env(safe-area-inset-top));right:16px;color:#fff;font-size:30px;
+    width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+</style>
+</head>
+<body>
+<header>
+  <h1>📸 照片排序器</h1>
+  <div class="sub" id="sub">上傳照片 · 拖曳右下把手調整順序 · 左上角是編號</div>
+</header>
+
+<div class="wrap">
+  <div class="bar">
+    <button class="btn primary" id="addBtn">＋ 加入照片</button>
+    <button class="btn ghost" id="copyBtn">📋 複製順序</button>
+    <button class="btn ghost danger" id="clearBtn">🗑 清空</button>
+  </div>
+
+  <div id="empty">
+    <div class="big">🖼️</div>
+    <div class="t">還沒有照片</div>
+    <div>點「加入照片」從手機相簿或相機上傳<br>之後長按右下角把手就能拖曳排序</div>
+  </div>
+
+  <div id="grid"></div>
+
+  <div class="hint" id="hint" style="display:none">
+    拖曳每張照片右下角的「⠿ 拖曳」把手即可調整順序，編號會自動更新。<br>
+    照片存在這支手機的瀏覽器裡（不會上傳到網路），換裝置看不到。
+  </div>
+</div>
+
+<input type="file" id="file" accept="image/*" multiple hidden>
+<div id="toast"></div>
+<div id="lightbox"><span class="lbnum" id="lbnum"></span><span class="lbclose" id="lbclose">✕</span><img id="lbimg" alt=""></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const grid=$('grid');
+let photos=[];           // [{id, name, blob, url}]
+const uid=()=> (crypto.randomUUID?crypto.randomUUID():'id'+Date.now()+Math.random().toString(36).slice(2));
+
+/* ── IndexedDB：存照片 blob（大檔用 IDB 才穩，順序另存 localStorage） ── */
+let db=null;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open('photoSorter',1);
+    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains('imgs')) r.result.createObjectStore('imgs',{keyPath:'id'}); };
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>rej(r.error);
+  });
+}
+function tx(mode){ return db.transaction('imgs',mode).objectStore('imgs'); }
+function idbPut(rec){ return new Promise((res,rej)=>{const r=tx('readwrite').put(rec);r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
+function idbDel(id){ return new Promise((res,rej)=>{const r=tx('readwrite').delete(id);r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
+function idbAll(){ return new Promise((res,rej)=>{const r=tx('readonly').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);}); }
+function idbClear(){ return new Promise((res,rej)=>{const r=tx('readwrite').clear();r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
+
+const ORDER_KEY='photoSorter.order';
+function saveOrder(){ localStorage.setItem(ORDER_KEY, JSON.stringify(photos.map(p=>p.id))); }
+function loadOrder(){ try{return JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');}catch(_){return [];} }
+
+async function boot(){
+  try{ db=await openDB(); }catch(e){ toast('此瀏覽器不支援本機儲存'); }
+  const recs=db?await idbAll():[];
+  const order=loadOrder();
+  const byId={}; recs.forEach(r=>byId[r.id]=r);
+  const ordered=[];
+  order.forEach(id=>{ if(byId[id]){ ordered.push(byId[id]); delete byId[id]; } });
+  Object.values(byId).forEach(r=>ordered.push(r));   // 沒在順序表裡的補在最後
+  photos=ordered.map(r=>({id:r.id,name:r.name,blob:r.blob,url:URL.createObjectURL(r.blob)}));
+  render();
+}
+
+/* ── 加入照片 ── */
+$('addBtn').onclick=()=>$('file').click();
+$('file').onchange=async e=>{
+  const files=[...e.target.files].filter(f=>f.type.startsWith('image/'));
+  if(!files.length)return;
+  for(const f of files){
+    const id=uid(); const blob=f;                    // File 本身就是 Blob，可直接存 IDB
+    const rec={id,name:f.name||'photo',blob};
+    if(db) await idbPut(rec);
+    photos.push({id,name:rec.name,blob,url:URL.createObjectURL(blob)});
+  }
+  saveOrder(); render();
+  toast('已加入 '+files.length+' 張，共 '+photos.length+' 張');
+  e.target.value='';
+};
+
+/* ── 渲染 ── */
+function render(){
+  grid.innerHTML='';
+  const has=photos.length>0;
+  $('empty').style.display=has?'none':'block';
+  $('hint').style.display=has?'block':'none';
+  $('sub').textContent=has?('共 '+photos.length+' 張 · 拖曳把手可排序'):'上傳照片 · 拖曳右下把手調整順序 · 左上角是編號';
+  photos.forEach((p,i)=>{
+    const c=document.createElement('div');
+    c.className='card'; c.dataset.id=p.id;
+    c.innerHTML=
+      '<div class="imgbox"><div class="num">'+(i+1)+'</div>'+
+      '<button class="del" title="刪除">✕</button>'+
+      '<img src="'+p.url+'" alt=""></div>'+
+      '<div class="meta"><span class="name">'+escapeHtml(p.name)+'</span>'+
+      '<span class="handle"><span class="grip">⠿</span>拖曳</span></div>';
+    c.querySelector('.del').onclick=ev=>{ ev.stopPropagation(); removePhoto(p.id); };
+    c.querySelector('img').onclick=()=>openLightbox(p,i);
+    c.querySelector('.handle').addEventListener('pointerdown',ev=>startDrag(c,ev));
+    grid.appendChild(c);
+  });
+}
+function updateNums(){ [...grid.children].forEach((c,i)=>{ const n=c.querySelector('.num'); if(n)n.textContent=i+1; }); }
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+async function removePhoto(id){
+  const p=photos.find(x=>x.id===id); if(p&&p.url)URL.revokeObjectURL(p.url);
+  photos=photos.filter(x=>x.id!==id);
+  if(db)await idbDel(id);
+  saveOrder(); render();
+}
+
+/* ── 拖曳排序（用分身跟著手指 + elementFromPoint 找目標，依方向插入；純指標事件、支援觸控） ── */
+let drag=null;
+function startDrag(card,e){
+  e.preventDefault();
+  const r=card.getBoundingClientRect();
+  const clone=card.cloneNode(true);
+  clone.className='card drag-clone';
+  clone.style.width=r.width+'px'; clone.style.height=r.height+'px';
+  clone.style.left=r.left+'px';   clone.style.top=r.top+'px';
+  document.body.appendChild(clone);
+  card.classList.add('placeholder');
+  drag={card,clone,dx:e.clientX-r.left,dy:e.clientY-r.top};
+  try{card.querySelector('.handle').setPointerCapture(e.pointerId);}catch(_){}
+  if(navigator.vibrate)navigator.vibrate(12);
+  document.addEventListener('pointermove',moveDrag);
+  document.addEventListener('pointerup',endDrag);
+  document.addEventListener('pointercancel',endDrag);
+}
+function moveDrag(e){
+  if(!drag)return;
+  e.preventDefault();
+  drag.clone.style.left=(e.clientX-drag.dx)+'px';
+  drag.clone.style.top =(e.clientY-drag.dy)+'px';
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  const over=el&&el.closest('.card');
+  if(over&&over!==drag.card&&over.parentNode===grid){
+    const cards=[...grid.children];
+    const from=cards.indexOf(drag.card), to=cards.indexOf(over);
+    if(from<to) grid.insertBefore(drag.card, over.nextSibling);  // 往後移→插在目標之後
+    else        grid.insertBefore(drag.card, over);              // 往前移→插在目標之前
+    updateNums();
+  }
+  autoScroll(e.clientY);
+}
+function endDrag(){
+  if(!drag)return;
+  drag.clone.remove();
+  drag.card.classList.remove('placeholder');
+  drag=null;
+  document.removeEventListener('pointermove',moveDrag);
+  document.removeEventListener('pointerup',endDrag);
+  document.removeEventListener('pointercancel',endDrag);
+  // 依目前 DOM 順序重排資料
+  const ids=[...grid.children].map(c=>c.dataset.id);
+  photos.sort((a,b)=>ids.indexOf(a.id)-ids.indexOf(b.id));
+  saveOrder(); updateNums();
+}
+/* 拖到畫面上下緣時自動捲動 */
+let scrollRAF=null;
+function autoScroll(y){
+  const margin=70, speed=14;
+  let dir=0;
+  if(y<margin) dir=-1; else if(y>innerHeight-margin) dir=1;
+  if(dir===0){ if(scrollRAF){cancelAnimationFrame(scrollRAF);scrollRAF=null;} return; }
+  if(scrollRAF)return;
+  const step=()=>{ if(!drag){scrollRAF=null;return;} scrollBy(0,dir*speed); scrollRAF=requestAnimationFrame(step); };
+  scrollRAF=requestAnimationFrame(step);
+}
+
+/* ── 複製順序清單 ── */
+$('copyBtn').onclick=async()=>{
+  if(!photos.length){ toast('還沒有照片'); return; }
+  const text=photos.map((p,i)=>(i+1)+'. '+p.name).join('\n');
+  try{ await navigator.clipboard.writeText(text); toast('已複製順序清單（'+photos.length+' 張）'); }
+  catch(_){ toast('複製失敗，可長按下方文字手動複製'); prompt('順序清單：',text); }
+};
+
+/* ── 清空 ── */
+$('clearBtn').onclick=async()=>{
+  if(!photos.length)return;
+  if(!confirm('確定清空全部 '+photos.length+' 張照片？此動作無法復原'))return;
+  photos.forEach(p=>p.url&&URL.revokeObjectURL(p.url));
+  photos=[];
+  if(db)await idbClear();
+  localStorage.removeItem(ORDER_KEY);
+  render(); toast('已清空');
+};
+
+/* ── 放大檢視 ── */
+function openLightbox(p,i){ $('lbimg').src=p.url; $('lbnum').textContent='#'+(i+1); $('lightbox').classList.add('show'); }
+$('lightbox').onclick=()=>$('lightbox').classList.remove('show');
+
+/* ── toast ── */
+let toastT=null;
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
+
+boot();
+</script>
+</body>
+</html>
