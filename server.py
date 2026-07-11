@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-照片排序器 — 共用相簿後端（用戶自己電腦當伺服器）
-純標準庫 http.server；照片存 uploads/、順序/中繼資料存 data.json。
-上傳走 raw body（X-Filename header），避開 multipart 解析。
-iPhone HEIC 自動轉 JPEG（pillow-heif），確保別人裝置也看得到。
+照片排序器 — 共用相簿（相簿版）後端
+資料模型 data.json:
+{
+  "albums": { aid: {"id","name","order":[photoId,...],"created"} },
+  "albumOrder": [aid,...],
+  "items": { photoId: {"name","file"} }
+}
+照片存 uploads/。上傳走 raw body（X-Filename header）。iPhone HEIC 自動轉 JPEG。
 用法：python server.py [port]   預設 8090
 """
-import sys, os, json, threading, io, mimetypes
+import sys, os, json, threading, io, mimetypes, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -15,9 +19,8 @@ UP   = os.path.join(ROOT, 'uploads')
 DATA = os.path.join(ROOT, 'data.json')
 os.makedirs(UP, exist_ok=True)
 LOCK = threading.Lock()
-MAXBODY = 40 * 1024 * 1024   # 單張上限 40MB
+MAXBODY = 40 * 1024 * 1024
 
-# 選用：HEIC/HEIF 轉 JPEG
 try:
     import pillow_heif; from PIL import Image
     pillow_heif.register_heif_opener(); HEIF = True
@@ -27,33 +30,74 @@ except Exception:
     except Exception:
         Image = None; HEIF = False
 
+def _new_id(): return uuid.uuid4().hex
+
+def _normalize(d):
+    """容錯 + 舊(扁平)結構自動遷移成相簿結構。"""
+    if not isinstance(d, dict): d = {}
+    items = d.get('items', {}) if isinstance(d.get('items'), dict) else {}
+    if 'albums' not in d:
+        # 舊扁平: {items, order} → 包成一個相簿；但完全空的新安裝就給空清單（不要生出幽靈相簿）
+        old_order = [i for i in d.get('order', []) if i in items]
+        if items:
+            aid = _new_id()
+            d = {"albums": {aid: {"id": aid, "name": "相簿", "order": old_order, "created": 0}},
+                 "albumOrder": [aid], "items": items}
+        else:
+            d = {"albums": {}, "albumOrder": [], "items": {}}
+    d.setdefault('albums', {}); d.setdefault('albumOrder', []); d.setdefault('items', {})
+    # 清理：albumOrder 只留存在的相簿；每個相簿 order 只留存在的照片
+    d['albumOrder'] = [a for a in d['albumOrder'] if a in d['albums']]
+    for a in d['albums']:
+        if a not in d['albumOrder']: d['albumOrder'].append(a)
+    for a, al in d['albums'].items():
+        al['order'] = [p for p in al.get('order', []) if p in d['items']]
+    return d
+
 def _load():
+    raw = None
     if os.path.exists(DATA):
         try:
-            with open(DATA, 'r', encoding='utf-8') as f: return json.load(f)
+            with open(DATA, 'r', encoding='utf-8') as f: raw = json.load(f)
+        except Exception: raw = None
+    d = _normalize(raw if isinstance(raw, dict) else {})
+    # 舊(扁平)結構第一次讀到就遷移並存起來（固定 aid，避免每次讀都生新 id）
+    if isinstance(raw, dict) and 'albums' not in raw and raw.get('items'):
+        try: _save(d)
         except Exception: pass
-    return {"items": {}, "order": []}
+    return d
 
 def _save(d):
     tmp = DATA + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f: json.dump(d, f, ensure_ascii=False)
     os.replace(tmp, DATA)
 
-def _list_payload(d):
+def _cover(d, al):
+    for pid in al.get('order', []):
+        it = d['items'].get(pid)
+        if it: return '/uploads/' + it['file']
+    return None
+
+def _albums_payload(d):
     out = []
-    for i, pid in enumerate(d["order"]):
-        it = d["items"].get(pid)
-        if not it: continue
-        out.append({"id": pid, "name": it["name"], "url": "/uploads/" + it["file"], "pos": i + 1})
+    for aid in d['albumOrder']:
+        al = d['albums'].get(aid)
+        if not al: continue
+        out.append({"id": aid, "name": al['name'], "count": len(al['order']), "cover": _cover(d, al)})
     return out
 
-def _new_id():
-    # 不依賴 uuid 也行，但 uuid4 最穩
-    import uuid; return uuid.uuid4().hex
+def _photos_payload(d, aid):
+    al = d['albums'].get(aid)
+    if not al: return None
+    out = []
+    for i, pid in enumerate(al['order']):
+        it = d['items'].get(pid)
+        if not it: continue
+        out.append({"id": pid, "name": it['name'], "url": '/uploads/' + it['file'], "pos": i + 1})
+    return out
 
 def _detect_ext(raw, filename):
-    lower = (filename or '').lower()
-    head = raw[:16]
+    lower = (filename or '').lower(); head = raw[:16]
     is_heic = lower.endswith(('.heic', '.heif')) or (head[4:8] == b'ftyp' and head[8:12] in (b'heic', b'heix', b'mif1', b'hevc', b'msf1'))
     if is_heic and Image and HEIF:
         try:
@@ -71,7 +115,6 @@ def _detect_ext(raw, filename):
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
-
     def _send(self, code, body=b'', ctype='application/json; charset=utf-8', extra=None):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
@@ -84,31 +127,8 @@ class H(BaseHTTPRequestHandler):
             for k, v in extra.items(): self.send_header(k, v)
         self.end_headers()
         if body: self.wfile.write(body)
-
     def _json(self, obj, code=200): self._send(code, json.dumps(obj, ensure_ascii=False).encode('utf-8'))
-
     def do_OPTIONS(self): self._send(204)
-
-    def do_GET(self):
-        u = urlparse(self.path); path = u.path
-        if path == '/' or path == '/index.html':
-            try:
-                with open(os.path.join(ROOT, 'index.html'), 'rb') as f: b = f.read()
-                return self._send(200, b, 'text/html; charset=utf-8')
-            except Exception:
-                return self._send(500, b'index.html missing', 'text/plain; charset=utf-8')
-        if path == '/api/list':
-            with LOCK: d = _load()
-            return self._json({"photos": _list_payload(d)})
-        if path.startswith('/uploads/'):
-            fn = os.path.basename(unquote(path[len('/uploads/'):]))
-            fp = os.path.join(UP, fn)
-            if os.path.isfile(fp):
-                ctype = mimetypes.guess_type(fp)[0] or 'application/octet-stream'
-                with open(fp, 'rb') as f: b = f.read()
-                return self._send(200, b, ctype, {'Cache-Control': 'public, max-age=31536000'})
-            return self._send(404, b'not found', 'text/plain')
-        return self._send(404, b'not found', 'text/plain')
 
     def _read_body(self):
         n = int(self.headers.get('Content-Length', 0))
@@ -120,52 +140,147 @@ class H(BaseHTTPRequestHandler):
             buf += chunk
         return buf
 
+    def do_GET(self):
+        u = urlparse(self.path); path = u.path; q = parse_qs(u.query)
+        if path in ('/', '/index.html'):
+            try:
+                with open(os.path.join(ROOT, 'index.html'), 'rb') as f: b = f.read()
+                return self._send(200, b, 'text/html; charset=utf-8')
+            except Exception:
+                return self._send(500, b'index.html missing', 'text/plain; charset=utf-8')
+        if path == '/api/albums':
+            with LOCK: d = _load()
+            return self._json({"albums": _albums_payload(d)})
+        if path == '/api/list':
+            aid = q.get('album', [''])[0]
+            with LOCK: d = _load()
+            ph = _photos_payload(d, aid)
+            if ph is None: return self._json({"error": "no such album"}, 404)
+            al = d['albums'][aid]
+            return self._json({"album": {"id": aid, "name": al['name']}, "photos": ph})
+        if path.startswith('/uploads/'):
+            fn = os.path.basename(unquote(path[len('/uploads/'):]))
+            fp = os.path.join(UP, fn)
+            if os.path.isfile(fp):
+                ctype = mimetypes.guess_type(fp)[0] or 'application/octet-stream'
+                with open(fp, 'rb') as f: b = f.read()
+                return self._send(200, b, ctype, {'Cache-Control': 'public, max-age=31536000'})
+            return self._send(404, b'not found', 'text/plain')
+        return self._send(404, b'not found', 'text/plain')
+
     def do_POST(self):
         u = urlparse(self.path); path = u.path; q = parse_qs(u.query)
+
+        if path == '/api/album/create':
+            raw = self._read_body() or b'{}'
+            try: name = (json.loads(raw.decode('utf-8')).get('name') or '').strip()
+            except Exception: name = ''
+            if not name: name = '未命名相簿'
+            aid = _new_id()
+            with LOCK:
+                d = _load(); d['albums'][aid] = {"id": aid, "name": name[:60], "order": [], "created": 0}
+                d['albumOrder'].append(aid); _save(d)
+            return self._json({"id": aid, "name": name[:60], "count": 0, "cover": None})
+
+        if path == '/api/album/rename':
+            aid = q.get('id', [''])[0]; raw = self._read_body() or b'{}'
+            try: name = (json.loads(raw.decode('utf-8')).get('name') or '').strip()
+            except Exception: name = ''
+            with LOCK:
+                d = _load(); al = d['albums'].get(aid)
+                if not al: return self._json({"error": "no album"}, 404)
+                if name: al['name'] = name[:60]
+                _save(d)
+            return self._json({"ok": True})
+
+        if path == '/api/album/delete':
+            aid = q.get('id', [''])[0]; files = []
+            with LOCK:
+                d = _load(); al = d['albums'].pop(aid, None)
+                if aid in d['albumOrder']: d['albumOrder'].remove(aid)
+                if al:
+                    for pid in al['order']:
+                        it = d['items'].pop(pid, None)
+                        if it: files.append(it['file'])
+                _save(d)
+            for fn in files:
+                try: os.remove(os.path.join(UP, fn))
+                except Exception: pass
+            return self._json({"ok": True})
+
+        if path == '/api/album/order':
+            raw = self._read_body() or b'[]'
+            try: ids = json.loads(raw.decode('utf-8'))
+            except Exception: return self._json({"error": "bad json"}, 400)
+            with LOCK:
+                d = _load(); known = set(d['albums'].keys())
+                new = [i for i in ids if i in known]
+                for i in d['albumOrder']:
+                    if i not in new: new.append(i)
+                d['albumOrder'] = new; _save(d)
+            return self._json({"ok": True})
+
         if path == '/api/upload':
+            aid = q.get('album', [''])[0]
             raw = self._read_body()
             if raw is None: return self._json({"error": "空的或太大（單張上限 40MB）"}, 400)
             fname = unquote(self.headers.get('X-Filename', '') or (q.get('name', [''])[0]))
             data, ext = _detect_ext(raw, fname)
             pid = _new_id(); file = pid + '.' + ext
-            with open(os.path.join(UP, file), 'wb') as f: f.write(data)
-            disp = fname or ('photo.' + ext)
             with LOCK:
-                d = _load(); d["items"][pid] = {"name": disp, "file": file}; d["order"].append(pid); _save(d)
-            return self._json({"id": pid, "url": "/uploads/" + file, "name": disp})
+                d = _load()
+                if aid not in d['albums']: return self._json({"error": "no album"}, 404)
+                with open(os.path.join(UP, file), 'wb') as f: f.write(data)
+                disp = fname or ('photo.' + ext)
+                d['items'][pid] = {"name": disp, "file": file}
+                d['albums'][aid]['order'].append(pid); _save(d)
+            return self._json({"id": pid, "url": '/uploads/' + file, "name": disp})
+
         if path == '/api/order':
-            raw = self._read_body() or b'[]'
+            aid = q.get('album', [''])[0]; raw = self._read_body() or b'[]'
             try: ids = json.loads(raw.decode('utf-8'))
             except Exception: return self._json({"error": "bad json"}, 400)
             with LOCK:
-                d = _load(); known = set(d["items"].keys())
-                new = [i for i in ids if i in known]
-                for i in d["order"]:
-                    if i not in new: new.append(i)   # 保底：沒被列到的補回
-                d["order"] = new; _save(d)
+                d = _load(); al = d['albums'].get(aid)
+                if not al: return self._json({"error": "no album"}, 404)
+                cur = set(al['order'])
+                new = [i for i in ids if i in cur]
+                for i in al['order']:
+                    if i not in new: new.append(i)   # 保底：漏掉的補回，絕不掉照片
+                al['order'] = new; _save(d)
             return self._json({"ok": True})
+
         if path == '/api/delete':
-            pid = q.get('id', [''])[0]
+            pid = q.get('id', [''])[0]; aid = q.get('album', [''])[0]; fn = None
             with LOCK:
-                d = _load(); it = d["items"].pop(pid, None)
-                if pid in d["order"]: d["order"].remove(pid)
+                d = _load(); al = d['albums'].get(aid)
+                if al and pid in al['order']: al['order'].remove(pid)
+                it = d['items'].pop(pid, None)
+                if it: fn = it['file']
                 _save(d)
-            if it:
-                try: os.remove(os.path.join(UP, it["file"]))
+            if fn:
+                try: os.remove(os.path.join(UP, fn))
                 except Exception: pass
             return self._json({"ok": True})
+
         if path == '/api/clear':
+            aid = q.get('album', [''])[0]; files = []
             with LOCK:
-                d = _load(); files = [it["file"] for it in d["items"].values()]
-                d = {"items": {}, "order": []}; _save(d)
+                d = _load(); al = d['albums'].get(aid)
+                if not al: return self._json({"error": "no album"}, 404)
+                for pid in al['order']:
+                    it = d['items'].pop(pid, None)
+                    if it: files.append(it['file'])
+                al['order'] = []; _save(d)
             for fn in files:
                 try: os.remove(os.path.join(UP, fn))
                 except Exception: pass
             return self._json({"ok": True})
+
         return self._send(404, b'not found', 'text/plain')
 
 if __name__ == '__main__':
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
     srv = ThreadingHTTPServer(('127.0.0.1', port), H)
-    print('photo-sorter server on http://127.0.0.1:%d  (HEIF=%s)' % (port, HEIF), flush=True)
+    print('photo-sorter (albums) on http://127.0.0.1:%d  HEIF=%s' % (port, HEIF), flush=True)
     srv.serve_forever()
