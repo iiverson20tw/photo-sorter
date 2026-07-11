@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#4f46e5">
-<title>照片排序器</title>
+<title>照片排序器 · 共用相簿</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   :root{--acc:#4f46e5;--acc2:#6366f1;--bg:#f4f5f8;--card:#fff;--txt:#1c2030;--sub:#7a8090;--line:#e6e8ee;}
@@ -18,7 +18,9 @@
   header{position:sticky;top:0;z-index:50;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;
     padding:calc(14px + env(safe-area-inset-top)) 16px 14px;box-shadow:0 4px 20px rgba(79,70,229,.28);}
   header h1{font-size:19px;font-weight:800;letter-spacing:.5px;display:flex;align-items:center;gap:8px;}
-  header .sub{font-size:12px;opacity:.9;margin-top:3px;}
+  header .sub{font-size:12px;opacity:.92;margin-top:3px;display:flex;align-items:center;gap:7px;}
+  #dot{width:8px;height:8px;border-radius:50%;background:#9ae6b4;box-shadow:0 0 8px #9ae6b4;flex:none;}
+  #dot.off{background:#ffb0b0;box-shadow:none;}
   .wrap{max-width:900px;margin:0 auto;padding:14px 14px calc(120px + env(safe-area-inset-bottom));}
 
   .bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
@@ -28,8 +30,13 @@
   .btn.primary{background:var(--acc);color:#fff;box-shadow:0 6px 18px rgba(79,70,229,.35);}
   .btn.ghost{background:var(--card);color:var(--txt);border:1px solid var(--line);flex:0 0 auto;min-width:0;padding:13px 16px;}
   .btn.ghost.danger{color:#e5484d;}
+  .btn[disabled]{opacity:.55;pointer-events:none;}
 
-  #empty{text-align:center;color:var(--sub);padding:70px 20px;line-height:1.9;}
+  #banner{display:none;background:#fff3cd;color:#7a5b00;border:1px solid #ffe08a;border-radius:12px;padding:12px 14px;
+    font-size:13px;line-height:1.6;margin-bottom:14px;}
+  @media (prefers-color-scheme:dark){#banner{background:#2a2410;color:#e8c766;border-color:#4a3f16;}}
+
+  #empty{text-align:center;color:var(--sub);padding:60px 20px;line-height:1.9;}
   #empty .big{font-size:52px;margin-bottom:10px;}
   #empty .t{font-size:15px;font-weight:600;color:var(--txt);}
 
@@ -51,36 +58,32 @@
     font-size:13px;font-weight:700;cursor:grab;touch-action:none;display:flex;align-items:center;gap:5px;}
   .card .handle:active{cursor:grabbing;background:var(--acc);color:#fff;}
   .card .handle .grip{letter-spacing:-2px;font-size:16px;}
+  .card .up{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);color:#fff;font-size:13px;}
 
-  /* 拖曳中跟著手指的分身 */
-  .drag-clone{position:fixed;z-index:9999;margin:0;pointer-events:none;
-    box-shadow:0 18px 50px rgba(0,0,0,.4);transform:scale(1.05);border-radius:16px;opacity:.96;}
+  .drag-clone{position:fixed;z-index:9999;margin:0;pointer-events:none;box-shadow:0 18px 50px rgba(0,0,0,.4);transform:scale(1.05);border-radius:16px;opacity:.96;}
 
-  /* 提示 toast */
   #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
     background:#111;color:#fff;padding:11px 20px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;
-    transition:opacity .25s,transform .25s;z-index:9998;box-shadow:0 8px 30px rgba(0,0,0,.4);}
+    transition:opacity .25s,transform .25s;z-index:9998;box-shadow:0 8px 30px rgba(0,0,0,.4);max-width:88vw;text-align:center;}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
   .hint{margin-top:16px;font-size:12px;color:var(--sub);text-align:center;line-height:1.7;}
 
-  /* 放大檢視 */
   #lightbox{position:fixed;inset:0;z-index:9997;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;padding:20px;}
   #lightbox.show{display:flex;}
   #lightbox img{max-width:100%;max-height:100%;border-radius:10px;image-orientation:from-image;}
-  #lightbox .lbnum{position:fixed;top:calc(16px + env(safe-area-inset-top));left:16px;background:var(--acc);color:#fff;
-    padding:6px 14px;border-radius:20px;font-weight:800;font-size:15px;}
-  #lightbox .lbclose{position:fixed;top:calc(12px + env(safe-area-inset-top));right:16px;color:#fff;font-size:30px;
-    width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  #lightbox .lbnum{position:fixed;top:calc(16px + env(safe-area-inset-top));left:16px;background:var(--acc);color:#fff;padding:6px 14px;border-radius:20px;font-weight:800;font-size:15px;}
+  #lightbox .lbclose{position:fixed;top:calc(12px + env(safe-area-inset-top));right:16px;color:#fff;font-size:30px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
 </style>
 </head>
 <body>
 <header>
-  <h1>📸 照片排序器</h1>
-  <div class="sub" id="sub">上傳照片 · 拖曳右下把手調整順序 · 左上角是編號</div>
+  <h1>📸 照片排序器 <span style="font-size:12px;font-weight:600;opacity:.85">共用相簿</span></h1>
+  <div class="sub"><span id="dot"></span><span id="sub">連線中…</span></div>
 </header>
 
 <div class="wrap">
+  <div id="banner"></div>
   <div class="bar">
     <button class="btn primary" id="addBtn">＋ 加入照片</button>
     <button class="btn ghost" id="copyBtn">📋 複製順序</button>
@@ -90,14 +93,14 @@
   <div id="empty">
     <div class="big">🖼️</div>
     <div class="t">還沒有照片</div>
-    <div>點「加入照片」從手機相簿或相機上傳<br>之後長按右下角把手就能拖曳排序</div>
+    <div>點「加入照片」上傳，大家開這個網址都看得到<br>拖曳右下角把手可調整順序</div>
   </div>
 
   <div id="grid"></div>
 
   <div class="hint" id="hint" style="display:none">
-    拖曳每張照片右下角的「⠿ 拖曳」把手即可調整順序，編號會自動更新。<br>
-    照片存在這支手機的瀏覽器裡（不會上傳到網路），換裝置看不到。
+    這是<b>共用相簿</b>：所有開這個網址的人都看得到、也能一起上傳跟排序，會自動同步。<br>
+    拖曳每張右下角「⠿ 拖曳」把手即可調整順序，編號會自動更新。
   </div>
 </div>
 
@@ -108,55 +111,54 @@
 <script>
 const $=id=>document.getElementById(id);
 const grid=$('grid');
-let photos=[];           // [{id, name, blob, url}]
-const uid=()=> (crypto.randomUUID?crypto.randomUUID():'id'+Date.now()+Math.random().toString(36).slice(2));
+let photos=[];              // [{id,name,url,pos}]
+let sig='';                // 目前順序簽章，用來判斷是否要重繪
+let lastMutate=0;          // 剛做過本機變更的時間（避免輪詢蓋掉）
+let online=false;
 
-/* ── IndexedDB：存照片 blob（大檔用 IDB 才穩，順序另存 localStorage） ── */
-let db=null;
-function openDB(){
-  return new Promise((res,rej)=>{
-    const r=indexedDB.open('photoSorter',1);
-    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains('imgs')) r.result.createObjectStore('imgs',{keyPath:'id'}); };
-    r.onsuccess=()=>res(r.result);
-    r.onerror=()=>rej(r.error);
-  });
+async function api(path,opts){ const r=await fetch(path,opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+function makeSig(list){ return list.map(p=>p.id).join(','); }
+
+/* ── 讀取清單 ── */
+async function refresh(force){
+  let data;
+  try{ data=await api('/api/list'); }
+  catch(e){ setOnline(false); return false; }
+  setOnline(true);
+  const list=data.photos||[];
+  const ns=makeSig(list);
+  if(force || ns!==sig){ photos=list; sig=ns; render(); }
+  return true;
 }
-function tx(mode){ return db.transaction('imgs',mode).objectStore('imgs'); }
-function idbPut(rec){ return new Promise((res,rej)=>{const r=tx('readwrite').put(rec);r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
-function idbDel(id){ return new Promise((res,rej)=>{const r=tx('readwrite').delete(id);r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
-function idbAll(){ return new Promise((res,rej)=>{const r=tx('readonly').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error);}); }
-function idbClear(){ return new Promise((res,rej)=>{const r=tx('readwrite').clear();r.onsuccess=res;r.onerror=()=>rej(r.error);}); }
-
-const ORDER_KEY='photoSorter.order';
-function saveOrder(){ localStorage.setItem(ORDER_KEY, JSON.stringify(photos.map(p=>p.id))); }
-function loadOrder(){ try{return JSON.parse(localStorage.getItem(ORDER_KEY)||'[]');}catch(_){return [];} }
-
-async function boot(){
-  try{ db=await openDB(); }catch(e){ toast('此瀏覽器不支援本機儲存'); }
-  const recs=db?await idbAll():[];
-  const order=loadOrder();
-  const byId={}; recs.forEach(r=>byId[r.id]=r);
-  const ordered=[];
-  order.forEach(id=>{ if(byId[id]){ ordered.push(byId[id]); delete byId[id]; } });
-  Object.values(byId).forEach(r=>ordered.push(r));   // 沒在順序表裡的補在最後
-  photos=ordered.map(r=>({id:r.id,name:r.name,blob:r.blob,url:URL.createObjectURL(r.blob)}));
-  render();
+function setOnline(v){
+  online=v; $('dot').classList.toggle('off',!v);
+  if(v){ $('banner').style.display='none'; }
+  else{
+    $('sub').textContent='連不到伺服器';
+    $('banner').style.display='block';
+    $('banner').innerHTML='⚠️ 連不到伺服器。這個共用相簿需要透過<b>伺服器網址</b>開啟（電腦要開著）。請確認你開的是分享給你的那個網址。';
+  }
 }
 
-/* ── 加入照片 ── */
+/* ── 加入照片：每張以 raw body 上傳 ── */
 $('addBtn').onclick=()=>$('file').click();
 $('file').onchange=async e=>{
-  const files=[...e.target.files].filter(f=>f.type.startsWith('image/'));
-  if(!files.length)return;
-  for(const f of files){
-    const id=uid(); const blob=f;                    // File 本身就是 Blob，可直接存 IDB
-    const rec={id,name:f.name||'photo',blob};
-    if(db) await idbPut(rec);
-    photos.push({id,name:rec.name,blob,url:URL.createObjectURL(blob)});
-  }
-  saveOrder(); render();
-  toast('已加入 '+files.length+' 張，共 '+photos.length+' 張');
+  const files=[...e.target.files].filter(f=>f.type.startsWith('image/')||/\.(hei[cf])$/i.test(f.name));
   e.target.value='';
+  if(!files.length)return;
+  $('addBtn').disabled=true;
+  let ok=0;
+  for(let i=0;i<files.length;i++){
+    $('addBtn').textContent='上傳中 '+(i+1)+'/'+files.length+'…';
+    try{
+      await api('/api/upload',{method:'POST',headers:{'X-Filename':encodeURIComponent(files[i].name||'photo')},body:files[i]});
+      ok++;
+    }catch(err){ toast('第 '+(i+1)+' 張上傳失敗'); }
+  }
+  $('addBtn').disabled=false; $('addBtn').textContent='＋ 加入照片';
+  lastMutate=Date.now();
+  await refresh(true);
+  toast('已上傳 '+ok+' 張，共 '+photos.length+' 張');
 };
 
 /* ── 渲染 ── */
@@ -165,14 +167,14 @@ function render(){
   const has=photos.length>0;
   $('empty').style.display=has?'none':'block';
   $('hint').style.display=has?'block':'none';
-  $('sub').textContent=has?('共 '+photos.length+' 張 · 拖曳把手可排序'):'上傳照片 · 拖曳右下把手調整順序 · 左上角是編號';
+  if(online) $('sub').textContent=has?('共用相簿 · 共 '+photos.length+' 張 · 自動同步'):'共用相簿 · 大家都看得到';
   photos.forEach((p,i)=>{
     const c=document.createElement('div');
     c.className='card'; c.dataset.id=p.id;
     c.innerHTML=
       '<div class="imgbox"><div class="num">'+(i+1)+'</div>'+
       '<button class="del" title="刪除">✕</button>'+
-      '<img src="'+p.url+'" alt=""></div>'+
+      '<img src="'+p.url+'" alt="" loading="lazy"></div>'+
       '<div class="meta"><span class="name">'+escapeHtml(p.name)+'</span>'+
       '<span class="handle"><span class="grip">⠿</span>拖曳</span></div>';
     c.querySelector('.del').onclick=ev=>{ ev.stopPropagation(); removePhoto(p.id); };
@@ -185,13 +187,12 @@ function updateNums(){ [...grid.children].forEach((c,i)=>{ const n=c.querySelect
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
 async function removePhoto(id){
-  const p=photos.find(x=>x.id===id); if(p&&p.url)URL.revokeObjectURL(p.url);
-  photos=photos.filter(x=>x.id!==id);
-  if(db)await idbDel(id);
-  saveOrder(); render();
+  photos=photos.filter(x=>x.id!==id); sig=makeSig(photos); render(); lastMutate=Date.now();
+  try{ await api('/api/delete?id='+encodeURIComponent(id),{method:'POST'}); }catch(_){ toast('刪除失敗'); }
+  refresh(true);
 }
 
-/* ── 拖曳排序（用分身跟著手指 + elementFromPoint 找目標，依方向插入；純指標事件、支援觸控） ── */
+/* ── 拖曳排序（分身跟手指 + elementFromPoint 依方向插入；觸控 OK） ── */
 let drag=null;
 function startDrag(card,e){
   e.preventDefault();
@@ -210,8 +211,7 @@ function startDrag(card,e){
   document.addEventListener('pointercancel',endDrag);
 }
 function moveDrag(e){
-  if(!drag)return;
-  e.preventDefault();
+  if(!drag)return; e.preventDefault();
   drag.clone.style.left=(e.clientX-drag.dx)+'px';
   drag.clone.style.top =(e.clientY-drag.dy)+'px';
   const el=document.elementFromPoint(e.clientX,e.clientY);
@@ -219,30 +219,27 @@ function moveDrag(e){
   if(over&&over!==drag.card&&over.parentNode===grid){
     const cards=[...grid.children];
     const from=cards.indexOf(drag.card), to=cards.indexOf(over);
-    if(from<to) grid.insertBefore(drag.card, over.nextSibling);  // 往後移→插在目標之後
-    else        grid.insertBefore(drag.card, over);              // 往前移→插在目標之前
+    if(from<to) grid.insertBefore(drag.card, over.nextSibling);
+    else        grid.insertBefore(drag.card, over);
     updateNums();
   }
   autoScroll(e.clientY);
 }
-function endDrag(){
+async function endDrag(){
   if(!drag)return;
-  drag.clone.remove();
-  drag.card.classList.remove('placeholder');
-  drag=null;
+  drag.clone.remove(); drag.card.classList.remove('placeholder'); drag=null;
   document.removeEventListener('pointermove',moveDrag);
   document.removeEventListener('pointerup',endDrag);
   document.removeEventListener('pointercancel',endDrag);
-  // 依目前 DOM 順序重排資料
   const ids=[...grid.children].map(c=>c.dataset.id);
   photos.sort((a,b)=>ids.indexOf(a.id)-ids.indexOf(b.id));
-  saveOrder(); updateNums();
+  sig=makeSig(photos); updateNums(); lastMutate=Date.now();
+  try{ await api('/api/order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ids)}); }
+  catch(_){ toast('順序儲存失敗'); }
 }
-/* 拖到畫面上下緣時自動捲動 */
 let scrollRAF=null;
 function autoScroll(y){
-  const margin=70, speed=14;
-  let dir=0;
+  const margin=70, speed=14; let dir=0;
   if(y<margin) dir=-1; else if(y>innerHeight-margin) dir=1;
   if(dir===0){ if(scrollRAF){cancelAnimationFrame(scrollRAF);scrollRAF=null;} return; }
   if(scrollRAF)return;
@@ -255,18 +252,16 @@ $('copyBtn').onclick=async()=>{
   if(!photos.length){ toast('還沒有照片'); return; }
   const text=photos.map((p,i)=>(i+1)+'. '+p.name).join('\n');
   try{ await navigator.clipboard.writeText(text); toast('已複製順序清單（'+photos.length+' 張）'); }
-  catch(_){ toast('複製失敗，可長按下方文字手動複製'); prompt('順序清單：',text); }
+  catch(_){ prompt('順序清單：',text); }
 };
 
-/* ── 清空 ── */
+/* ── 清空（共用，會清掉所有人看到的） ── */
 $('clearBtn').onclick=async()=>{
   if(!photos.length)return;
-  if(!confirm('確定清空全部 '+photos.length+' 張照片？此動作無法復原'))return;
-  photos.forEach(p=>p.url&&URL.revokeObjectURL(p.url));
-  photos=[];
-  if(db)await idbClear();
-  localStorage.removeItem(ORDER_KEY);
-  render(); toast('已清空');
+  if(!confirm('這是共用相簿，清空會刪掉所有人看到的 '+photos.length+' 張照片，確定？'))return;
+  photos=[]; sig=''; render(); lastMutate=Date.now();
+  try{ await api('/api/clear',{method:'POST'}); toast('已清空'); }catch(_){ toast('清空失敗'); }
+  refresh(true);
 };
 
 /* ── 放大檢視 ── */
@@ -277,7 +272,14 @@ $('lightbox').onclick=()=>$('lightbox').classList.remove('show');
 let toastT=null;
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
 
-boot();
+/* ── 輪詢：看到別人的變更（拖曳中/剛變更後 2.5s 不打擾） ── */
+async function poll(){
+  if(drag) return;
+  if(Date.now()-lastMutate < 2500) return;
+  await refresh(false);
+}
+setInterval(poll,4000);
+refresh(true);
 </script>
 </body>
 </html>

@@ -1,0 +1,6 @@
+uploads/
+data.json
+data.json.tmp
+cf.log
+*.log
+__pycache__/
