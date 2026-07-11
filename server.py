@@ -16,8 +16,11 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 UP   = os.path.join(ROOT, 'uploads')
+THUMBS = os.path.join(UP, 'thumbs')
 DATA = os.path.join(ROOT, 'data.json')
 os.makedirs(UP, exist_ok=True)
+os.makedirs(THUMBS, exist_ok=True)
+THUMB_MAX = 420
 LOCK = threading.Lock()
 MAXBODY = 40 * 1024 * 1024
 
@@ -75,7 +78,7 @@ def _save(d):
 def _cover(d, al):
     for pid in al.get('order', []):
         it = d['items'].get(pid)
-        if it: return '/uploads/' + it['file']
+        if it: return '/thumb/' + it['file']
     return None
 
 def _albums_payload(d):
@@ -93,8 +96,28 @@ def _photos_payload(d, aid):
     for i, pid in enumerate(al['order']):
         it = d['items'].get(pid)
         if not it: continue
-        out.append({"id": pid, "name": it['name'], "url": '/uploads/' + it['file'], "pos": i + 1})
+        out.append({"id": pid, "name": it['name'], "url": '/uploads/' + it['file'],
+                    "thumb": '/thumb/' + it['file'], "pos": i + 1})
     return out
+
+# ── EXIF 拍攝時間；沒有就回 None（iOS 網頁上傳常把時間戳拿掉）──
+def _capture_time(fp):
+    if not Image: return None
+    try:
+        im = Image.open(fp); ex = im.getexif()
+        dt = None
+        try: dt = ex.get_ifd(0x8769).get(36867)   # DateTimeOriginal
+        except Exception: pass
+        if not dt: dt = ex.get(306)                 # DateTime
+        if dt and isinstance(dt, str):
+            import datetime
+            return datetime.datetime.strptime(dt.strip(), "%Y:%m:%d %H:%M:%S")
+    except Exception: pass
+    return None
+
+def _natkey(s):
+    import re
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s or '')]
 
 def _detect_ext(raw, filename):
     lower = (filename or '').lower(); head = raw[:16]
@@ -114,6 +137,8 @@ def _detect_ext(raw, filename):
     return raw, 'jpg'
 
 class H(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'   # keep-alive：瀏覽器重用連線，避免大量縮圖時連線爆量造成 502
+    timeout = 20
     def log_message(self, *a): pass
     def _send(self, code, body=b'', ctype='application/json; charset=utf-8', extra=None):
         self.send_response(code)
@@ -158,6 +183,28 @@ class H(BaseHTTPRequestHandler):
             if ph is None: return self._json({"error": "no such album"}, 404)
             al = d['albums'][aid]
             return self._json({"album": {"id": aid, "name": al['name']}, "photos": ph})
+        if path.startswith('/thumb/'):
+            fn = os.path.basename(unquote(path[len('/thumb/'):]))
+            src = os.path.join(UP, fn)
+            if not os.path.isfile(src): return self._send(404, b'not found', 'text/plain')
+            tp = os.path.join(THUMBS, fn + '.jpg')
+            if not os.path.isfile(tp) and Image:
+                try:
+                    im = Image.open(src)
+                    try: im.draft('RGB', (THUMB_MAX*2, THUMB_MAX*2))
+                    except Exception: pass
+                    im = im.convert('RGB') if im.mode not in ('RGB', 'L') else im
+                    im.thumbnail((THUMB_MAX, THUMB_MAX))
+                    tmp = tp + '.tmp'; im.save(tmp, 'JPEG', quality=80); os.replace(tmp, tp)
+                except Exception:
+                    tp = None
+            if tp and os.path.isfile(tp):
+                with open(tp, 'rb') as f: b = f.read()
+                return self._send(200, b, 'image/jpeg', {'Cache-Control': 'public, max-age=31536000'})
+            # 無法產生縮圖→退回原圖
+            ctype = mimetypes.guess_type(src)[0] or 'application/octet-stream'
+            with open(src, 'rb') as f: b = f.read()
+            return self._send(200, b, ctype, {'Cache-Control': 'public, max-age=31536000'})
         if path.startswith('/uploads/'):
             fn = os.path.basename(unquote(path[len('/uploads/'):]))
             fp = os.path.join(UP, fn)
@@ -262,6 +309,23 @@ class H(BaseHTTPRequestHandler):
                 try: os.remove(os.path.join(UP, fn))
                 except Exception: pass
             return self._json({"ok": True})
+
+        if path == '/api/sort_by_time':
+            aid = q.get('album', [''])[0]
+            with LOCK:
+                d = _load(); al = d['albums'].get(aid)
+                if not al: return self._json({"error": "no album"}, 404)
+                ids = list(al['order'])
+                times = {}
+                for pid in ids:
+                    it = d['items'].get(pid)
+                    times[pid] = _capture_time(os.path.join(UP, it['file'])) if it else None
+                if ids and all(times[i] is not None for i in ids):
+                    ids.sort(key=lambda i: times[i]); method = 'exif'
+                else:
+                    ids.sort(key=lambda i: _natkey(d['items'].get(i, {}).get('name', ''))); method = 'filename'
+                al['order'] = ids; _save(d)
+            return self._json({"ok": True, "method": method, "count": len(ids)})
 
         if path == '/api/clear':
             aid = q.get('album', [''])[0]; files = []
