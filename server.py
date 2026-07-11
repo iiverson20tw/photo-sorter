@@ -97,7 +97,7 @@ def _photos_payload(d, aid):
         it = d['items'].get(pid)
         if not it: continue
         out.append({"id": pid, "name": it['name'], "url": '/uploads/' + it['file'],
-                    "thumb": '/thumb/' + it['file'], "pos": i + 1})
+                    "thumb": '/thumb/' + it['file'], "taken": it.get('taken'), "pos": i + 1})
     return out
 
 # ── EXIF 拍攝時間；沒有就回 None（iOS 網頁上傳常把時間戳拿掉）──

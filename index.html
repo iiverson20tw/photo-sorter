@@ -51,6 +51,7 @@
   .card{position:relative;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#0003;touch-action:pan-y;user-select:none;cursor:pointer;}
   .card img{width:100%;height:100%;object-fit:cover;display:block;image-orientation:from-image;pointer-events:none;}
   .card .num{position:absolute;top:3px;left:3px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:rgba(79,70,229,.95);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px rgba(0,0,0,.45);}
+  .card .date{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(0deg,rgba(0,0,0,.62),transparent);color:#fff;font-size:9px;font-weight:600;letter-spacing:.2px;padding:8px 2px 3px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none;}
   .card.placeholder{opacity:.25;}
   .drag-clone{position:fixed;z-index:9999;pointer-events:none;border-radius:8px;overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,.5);transform:scale(1.12);}
   .drag-clone img{width:100%;height:100%;object-fit:cover;}
@@ -73,6 +74,7 @@
   #lbdel:active{background:#e5484d;}
   .lbnav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:44px;height:64px;border:none;background:rgba(0,0,0,.28);color:#fff;font-size:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
   .lbnav.prev{left:0;border-radius:0 12px 12px 0;} .lbnav.next{right:0;border-radius:12px 0 0 12px;}
+  #lbdate{position:absolute;bottom:calc(42px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:#fff;font-size:14px;font-weight:700;z-index:2;pointer-events:none;text-shadow:0 1px 6px rgba(0,0,0,.8);}
   .lbtip{position:absolute;bottom:calc(16px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(255,255,255,.7);font-size:12px;z-index:2;pointer-events:none;}
 </style>
 </head>
@@ -113,6 +115,7 @@
   <button class="lbnav prev" id="lbprev">‹</button>
   <div id="lbstage"><img id="lbimg" alt=""></div>
   <button class="lbnav next" id="lbnext">›</button>
+  <div id="lbdate"></div>
   <div class="lbtip">雙指縮放 · 雙擊放大 · 左右滑換張 · 下滑關閉</div>
 </div>
 
@@ -126,6 +129,9 @@ function setOnline(v){ online=v; $('dot').classList.toggle('off',!v);
   if(!v){ $('sub').textContent='連不到伺服器'; $('banner').style.display='block'; $('banner').innerHTML='⚠️ 連不到伺服器，請透過<b>伺服器網址</b>開啟（電腦要開著）。'; }
   else $('banner').style.display='none'; }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function pad2(n){ return String(n).padStart(2,'0'); }
+function fmtDate(ep){ if(!ep)return ''; const d=new Date(ep*1000); return d.getFullYear()+'/'+pad2(d.getMonth()+1)+'/'+pad2(d.getDate()); }
+function fmtDateTime(ep){ if(!ep)return ''; const d=new Date(ep*1000); return d.getFullYear()+'/'+pad2(d.getMonth()+1)+'/'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes()); }
 
 /* 路由 */
 function route(){ const m=location.hash.match(/^#\/a\/([a-z0-9]+)/i); if(m) showAlbum(m[1]); else showAlbums(); }
@@ -160,7 +166,7 @@ function renderPhotos(){
   const grid=$('grid'); grid.innerHTML=''; $('photosEmpty').style.display=photos.length?'none':'block'; $('hint').style.display=photos.length?'block':'none';
   const frag=document.createDocumentFragment();
   photos.forEach((p,i)=>{ const c=document.createElement('div'); c.className='card'; c.dataset.id=p.id;
-    c.innerHTML='<img src="'+(p.thumb||p.url)+'" loading="lazy"><div class="num">'+(i+1)+'</div>';
+    c.innerHTML='<img src="'+(p.thumb||p.url)+'" loading="lazy"><div class="num">'+(i+1)+'</div>'+(p.taken?'<div class="date">'+fmtDate(p.taken)+'</div>':'');
     c.addEventListener('pointerdown',ev=>onPress(c,i,ev)); frag.appendChild(c); });
   grid.appendChild(frag);
 }
@@ -244,7 +250,7 @@ const lbimg=$('lbimg'), lbstage=$('lbstage');
 function applyLb(){ lbimg.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')'; }
 function resetLb(){ sc=1; tx=0; ty=0; applyLb(); }
 function openLightbox(i){ lbIdx=i; lbOpen=true; $('lightbox').classList.add('show'); loadLb(); }
-function loadLb(){ const p=photos[lbIdx]; if(!p){ closeLb(); return; } lbimg.src=p.url; $('lbnum').textContent=(lbIdx+1)+' / '+photos.length; resetLb(); }
+function loadLb(){ const p=photos[lbIdx]; if(!p){ closeLb(); return; } lbimg.src=p.url; $('lbnum').textContent=(lbIdx+1)+' / '+photos.length; $('lbdate').textContent=p.taken?('📅 '+fmtDateTime(p.taken)):''; resetLb(); }
 function closeLb(){ lbOpen=false; $('lightbox').classList.remove('show'); }
 function syncLightbox(){ if(lbIdx>=photos.length)lbIdx=photos.length-1; if(lbIdx<0){closeLb();return;} $('lbnum').textContent=(lbIdx+1)+' / '+photos.length; }
 function lbGo(d){ const n=lbIdx+d; if(n<0||n>=photos.length)return; lbIdx=n; loadLb(); }
