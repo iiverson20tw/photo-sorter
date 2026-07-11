@@ -279,7 +279,15 @@ class H(BaseHTTPRequestHandler):
                 if aid not in d['albums']: return self._json({"error": "no album"}, 404)
                 with open(os.path.join(UP, file), 'wb') as f: f.write(data)
                 disp = fname or ('photo.' + ext)
-                d['items'][pid] = {"name": disp, "file": file}
+                # 拍攝時間：優先 EXIF；沒有就用瀏覽器送來的檔案日期(File.lastModified)
+                ct = _capture_time(os.path.join(UP, file))
+                taken = ct.timestamp() if ct else None
+                if taken is None:
+                    try:
+                        v = float(self.headers.get('X-Taken', '') or 0) / 1000.0
+                        if v > 946684800: taken = v      # 2000 年後才視為合理日期
+                    except Exception: pass
+                d['items'][pid] = {"name": disp, "file": file, "taken": taken}
                 d['albums'][aid]['order'].append(pid); _save(d)
             return self._json({"id": pid, "url": '/uploads/' + file, "name": disp})
 
@@ -316,12 +324,17 @@ class H(BaseHTTPRequestHandler):
                 d = _load(); al = d['albums'].get(aid)
                 if not al: return self._json({"error": "no album"}, 404)
                 ids = list(al['order'])
+                # 每張的拍攝時間：優先用上傳時存的 taken(EXIF 或檔案日期)，沒有再即時讀 EXIF
                 times = {}
                 for pid in ids:
-                    it = d['items'].get(pid)
-                    times[pid] = _capture_time(os.path.join(UP, it['file'])) if it else None
+                    it = d['items'].get(pid) or {}
+                    t = it.get('taken')
+                    if t is None:
+                        ct = _capture_time(os.path.join(UP, it['file'])) if it.get('file') else None
+                        t = ct.timestamp() if ct else None
+                    times[pid] = t
                 if ids and all(times[i] is not None for i in ids):
-                    ids.sort(key=lambda i: times[i]); method = 'exif'
+                    ids.sort(key=lambda i: times[i]); method = 'time'
                 else:
                     ids.sort(key=lambda i: _natkey(d['items'].get(i, {}).get('name', ''))); method = 'filename'
                 al['order'] = ids; _save(d)
