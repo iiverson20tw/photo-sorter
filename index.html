@@ -69,7 +69,10 @@
   #selBar #selCancel{background:var(--acc);color:#fff;}
   .drag-clone{position:fixed;z-index:9999;pointer-events:none;border-radius:8px;overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,.5);transform:scale(1.12);}
   .drag-clone img{width:100%;height:100%;object-fit:cover;}
-  .drag-clone .num{display:none;}
+  .drag-clone .num,.drag-clone .check,.drag-clone .date{display:none;}
+  .drag-clone .gcount{position:absolute;top:4px;right:4px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:#e5484d;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 6px rgba(0,0,0,.6);}
+  .card.lifting{opacity:.32;}
+  .card.droptarget{outline:3px solid var(--acc);outline-offset:-3px;}
 
   #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);background:#111;color:#fff;padding:11px 20px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:9998;box-shadow:0 8px 30px rgba(0,0,0,.4);max-width:88vw;text-align:center;}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
@@ -119,6 +122,7 @@
     <div id="grid"></div>
     <div class="hint" id="hint" style="display:none">
       一排 5 張。<b>點照片</b>可放大（雙指縮放 / 雙擊放大 / 左右滑換張）；<b>長按照片</b>可拖曳調整順序，編號自動更新。<br>
+      按 <b>☑️ 選取</b> 後可勾選多張一起刪除；勾選後<b>長按其中一張拖曳</b>，就能把整組照片一起搬到新位置（相對順序不變）。<br>
       <b>📅 時間排序（舊→新）</b>：自動把照片從最舊排到最新——有拍攝時間就用拍攝時間，沒有的就用<b>檔名編號</b>（iPhone 的 IMG_1234 就是拍攝先後）。
     </div>
   </div>
@@ -231,19 +235,62 @@ async function removePhoto(id){ photos=photos.filter(x=>x.id!==id); sig=photos.m
 let press=null, drag=null;
 function onPress(card,idx,e){
   if(e.button&&e.button!==0)return;
-  press={card,idx,x0:e.clientX,y0:e.clientY,moved:false,armed:false,pid:e.pointerId};
-  if(!selMode) press.timer=setTimeout(()=>{ if(!press)return; press.armed=true; beginDrag(card,press.x0,press.y0,press.pid); },300);
+  press={card,idx,x0:e.clientX,y0:e.clientY,moved:false,armed:false,kind:null,pid:e.pointerId};
+  // 一般模式：長按=拖曳單張。選取模式：長按=把選取的多張一起拖曳（點=勾選）
+  press.timer=setTimeout(()=>{ if(!press)return; press.armed=true;
+    if(selMode){ press.kind='group'; beginGroupDrag(card,idx,press.x0,press.y0,press.pid); }
+    else { press.kind='single'; beginDrag(card,press.x0,press.y0,press.pid); }
+  },300);
   document.addEventListener('pointermove',pMove); document.addEventListener('pointerup',pUp); document.addEventListener('pointercancel',pUp);
 }
 function pMove(e){ if(!press)return;
-  if(press.armed){ dragMove(e); return; }
+  if(press.armed){ if(press.kind==='group') gMove(e); else dragMove(e); return; }
   if(Math.hypot(e.clientX-press.x0,e.clientY-press.y0)>9){ press.moved=true; clearTimeout(press.timer); }
 }
 function pUp(e){ if(!press)return; clearTimeout(press.timer);
   document.removeEventListener('pointermove',pMove); document.removeEventListener('pointerup',pUp); document.removeEventListener('pointercancel',pUp);
-  const wasArmed=press.armed, moved=press.moved, idx=press.idx, card=press.card; press=null;
-  if(wasArmed){ endDrag(); }
+  const wasArmed=press.armed, kind=press.kind, moved=press.moved, idx=press.idx, card=press.card; press=null;
+  if(wasArmed){ if(kind==='group') gEnd(); else endDrag(); }
   else if(!moved&&e.type==='pointerup'){ if(selMode) toggleSelect(card, photos[idx].id); else openLightbox(idx); }
+}
+/* ── 選取模式：多張一起拖曳到新位置 ── */
+let gdrag=null;
+function beginGroupDrag(card,idx,x,y,pid){
+  const pressedId=photos[idx].id;
+  const gids=(selected.has(pressedId)&&selected.size>0)?new Set(selected):new Set([pressedId]);
+  const r=card.getBoundingClientRect();
+  const clone=card.cloneNode(true); clone.className='card drag-clone';
+  clone.style.width=r.width+'px'; clone.style.height=r.height+'px'; clone.style.left=r.left+'px'; clone.style.top=r.top+'px';
+  if(gids.size>1){ const b=document.createElement('div'); b.className='gcount'; b.textContent=gids.size; clone.appendChild(b); }
+  document.body.appendChild(clone);
+  [...$('grid').children].forEach(c=>{ if(gids.has(c.dataset.id)) c.classList.add('lifting'); });
+  gdrag={clone,gids,dx:x-r.left,dy:y-r.top,target:null};
+  try{card.setPointerCapture(pid);}catch(_){}
+  if(navigator.vibrate)navigator.vibrate(16);
+}
+function gMove(e){
+  if(!gdrag)return; e.preventDefault();
+  gdrag.clone.style.left=(e.clientX-gdrag.dx)+'px'; gdrag.clone.style.top=(e.clientY-gdrag.dy)+'px';
+  const el=document.elementFromPoint(e.clientX,e.clientY); const over=el&&el.closest('.card');
+  if(gdrag.target&&gdrag.target!==over) gdrag.target.classList.remove('droptarget');
+  if(over&&over.parentNode===$('grid')&&!over.classList.contains('drag-clone')&&!gdrag.gids.has(over.dataset.id)){
+    over.classList.add('droptarget'); gdrag.target=over;
+  } else gdrag.target=null;
+  autoScroll(e.clientY);
+}
+async function gEnd(){
+  if(!gdrag)return;
+  gdrag.clone.remove();
+  const targetId=gdrag.target?gdrag.target.dataset.id:null; const gids=gdrag.gids;
+  [...$('grid').children].forEach(c=>c.classList.remove('lifting','droptarget'));
+  gdrag=null;
+  const group=photos.filter(p=>gids.has(p.id));
+  const rest=photos.filter(p=>!gids.has(p.id));
+  let ins=targetId?rest.findIndex(p=>p.id===targetId):rest.length; if(ins<0)ins=rest.length;
+  photos=[...rest.slice(0,ins),...group,...rest.slice(ins)];
+  sig=photos.map(p=>p.id).join(','); lastMutate=Date.now(); renderPhotos();
+  try{ await api('/api/order?album='+encodeURIComponent(curAlbum),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(photos.map(p=>p.id))}); toast('已移動 '+group.length+' 張'); }
+  catch(_){ toast('移動失敗'); }
 }
 
 /* ── 多選 / 批次刪除（類似 iPhone 相簿） ── */
@@ -290,11 +337,11 @@ async function endDrag(){
   photos.sort((a,b)=>ids.indexOf(a.id)-ids.indexOf(b.id)); sig=ids.join(','); updateNums(); lastMutate=Date.now();
   try{ await api('/api/order?album='+encodeURIComponent(curAlbum),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ids)}); }catch(_){ toast('順序儲存失敗'); }
 }
-document.addEventListener('touchmove',e=>{ if(drag)e.preventDefault(); },{passive:false});  // 拖曳時不讓頁面捲動打架
+document.addEventListener('touchmove',e=>{ if(drag||gdrag)e.preventDefault(); },{passive:false});  // 拖曳時不讓頁面捲動打架
 let scrollRAF=null;
 function autoScroll(y){ const margin=80,speed=17; let dir=0; if(y<margin)dir=-1; else if(y>innerHeight-margin)dir=1;
   if(dir===0){ if(scrollRAF){cancelAnimationFrame(scrollRAF);scrollRAF=null;} return; } if(scrollRAF)return;
-  const step=()=>{ if(!drag){scrollRAF=null;return;} scrollBy(0,dir*speed); scrollRAF=requestAnimationFrame(step); }; scrollRAF=requestAnimationFrame(step); }
+  const step=()=>{ if(!drag&&!gdrag){scrollRAF=null;return;} scrollBy(0,dir*speed); scrollRAF=requestAnimationFrame(step); }; scrollRAF=requestAnimationFrame(step); }
 
 /* ── 放大檢視：縮放/平移/左右滑換張/下滑關閉/刪除 ── */
 let lbOpen=false, lbIdx=0, sc=1, tx=0, ty=0;
