@@ -340,6 +340,26 @@ class H(BaseHTTPRequestHandler):
                 al['order'] = ids; _save(d)
             return self._json({"ok": True, "method": method, "count": len(ids)})
 
+        if path == '/api/delete_many':
+            aid = q.get('album', [''])[0]; raw = self._read_body() or b'[]'
+            try: ids = json.loads(raw.decode('utf-8'))
+            except Exception: return self._json({"error": "bad json"}, 400)
+            files = []
+            with LOCK:
+                d = _load(); al = d['albums'].get(aid)
+                if not al: return self._json({"error": "no album"}, 404)
+                idset = set(ids)
+                al['order'] = [p for p in al['order'] if p not in idset]
+                for pid in ids:
+                    it = d['items'].pop(pid, None)
+                    if it: files.append(it['file'])
+                _save(d)
+            for fn in files:
+                for pth in (os.path.join(UP, fn), os.path.join(THUMBS, fn + '.jpg')):
+                    try: os.remove(pth)
+                    except Exception: pass
+            return self._json({"ok": True, "deleted": len(files)})
+
         if path == '/api/clear':
             aid = q.get('album', [''])[0]; files = []
             with LOCK:

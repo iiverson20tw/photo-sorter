@@ -53,6 +53,20 @@
   .card .num{position:absolute;top:3px;left:3px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:rgba(79,70,229,.95);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px rgba(0,0,0,.45);}
   .card .date{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(0deg,rgba(0,0,0,.62),transparent);color:#fff;font-size:9px;font-weight:600;letter-spacing:.2px;padding:8px 2px 3px;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none;}
   .card.placeholder{opacity:.25;}
+  /* 選取模式 */
+  .card .check{position:absolute;top:5px;right:5px;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:900;line-height:1;box-shadow:0 1px 5px rgba(0,0,0,.55);z-index:3;}
+  body.selmode .card{cursor:pointer;}
+  body.selmode .card .check{display:flex;}
+  .card.selected .check{background:var(--acc);border-color:#fff;}
+  .card.selected .check::after{content:'✓';}
+  .card.selected img{transform:scale(.85);transition:transform .12s;}
+  #selBar{position:fixed;left:0;right:0;bottom:0;z-index:9996;display:none;align-items:center;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:var(--card);border-top:1px solid var(--line);box-shadow:0 -6px 24px rgba(0,0,0,.18);}
+  body.selmode #selBar{display:flex;}
+  #selBar #selCount{flex:1;text-align:center;font-weight:800;font-size:14px;}
+  #selBar button{border:none;border-radius:12px;padding:11px 15px;font-size:14px;font-weight:700;background:var(--bg);color:var(--txt);cursor:pointer;}
+  #selBar #selDel{background:#e5484d;color:#fff;}
+  #selBar #selDel[disabled]{opacity:.45;pointer-events:none;}
+  #selBar #selCancel{background:var(--acc);color:#fff;}
   .drag-clone{position:fixed;z-index:9999;pointer-events:none;border-radius:8px;overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,.5);transform:scale(1.12);}
   .drag-clone img{width:100%;height:100%;object-fit:cover;}
   .drag-clone .num{display:none;}
@@ -94,6 +108,7 @@
   <div id="albumView" style="display:none">
     <div class="bar">
       <button class="btn primary" id="addBtn">＋ 加入照片</button>
+      <button class="btn ghost" id="selBtn">☑️ 選取</button>
       <button class="btn ghost" id="sortBtn">📅 時間排序（舊→新）</button>
       <button class="btn ghost" id="copyBtn">📋 複製順序</button>
       <button class="btn ghost" id="renameBtn">✏️ 改名</button>
@@ -109,6 +124,12 @@
 </div>
 
 <input type="file" id="file" accept="image/*" multiple hidden>
+<div id="selBar">
+  <button id="selAll">全選</button>
+  <span id="selCount">已選 0 張</span>
+  <button id="selDel" disabled>🗑 刪除</button>
+  <button id="selCancel">完成</button>
+</div>
 <div id="toast"></div>
 <div id="lightbox">
   <div class="lbtop"><span id="lbnum"></span><div class="lbacts"><button id="lbdel" title="刪除">🗑</button><button id="lbclose" title="關閉">✕</button></div></div>
@@ -166,7 +187,8 @@ function renderPhotos(){
   const grid=$('grid'); grid.innerHTML=''; $('photosEmpty').style.display=photos.length?'none':'block'; $('hint').style.display=photos.length?'block':'none';
   const frag=document.createDocumentFragment();
   photos.forEach((p,i)=>{ const c=document.createElement('div'); c.className='card'; c.dataset.id=p.id;
-    c.innerHTML='<img src="'+(p.thumb||p.url)+'" loading="lazy"><div class="num">'+(i+1)+'</div>'+(p.taken?'<div class="date">'+fmtDate(p.taken)+'</div>':'');
+    c.innerHTML='<img src="'+(p.thumb||p.url)+'" loading="lazy"><div class="num">'+(i+1)+'</div>'+(p.taken?'<div class="date">'+fmtDate(p.taken)+'</div>':'')+'<div class="check"></div>';
+    if(selMode&&selected.has(p.id))c.classList.add('selected');
     c.addEventListener('pointerdown',ev=>onPress(c,i,ev)); frag.appendChild(c); });
   grid.appendChild(frag);
 }
@@ -198,12 +220,12 @@ $('copyBtn').onclick=async()=>{ if(!photos.length){ toast('還沒有照片'); re
 async function removePhoto(id){ photos=photos.filter(x=>x.id!==id); sig=photos.map(p=>p.id).join(','); renderPhotos(); lastMutate=Date.now();
   try{ await api('/api/delete?album='+encodeURIComponent(curAlbum)+'&id='+encodeURIComponent(id),{method:'POST'}); }catch(_){ toast('刪除失敗'); } }
 
-/* ── 點=放大 / 長按=拖曳 ── */
+/* ── 點=放大 / 長按=拖曳；選取模式：點=勾選（不拖曳、不放大） ── */
 let press=null, drag=null;
 function onPress(card,idx,e){
   if(e.button&&e.button!==0)return;
   press={card,idx,x0:e.clientX,y0:e.clientY,moved:false,armed:false,pid:e.pointerId};
-  press.timer=setTimeout(()=>{ if(!press)return; press.armed=true; beginDrag(card,press.x0,press.y0,press.pid); },300);
+  if(!selMode) press.timer=setTimeout(()=>{ if(!press)return; press.armed=true; beginDrag(card,press.x0,press.y0,press.pid); },300);
   document.addEventListener('pointermove',pMove); document.addEventListener('pointerup',pUp); document.addEventListener('pointercancel',pUp);
 }
 function pMove(e){ if(!press)return;
@@ -212,9 +234,32 @@ function pMove(e){ if(!press)return;
 }
 function pUp(e){ if(!press)return; clearTimeout(press.timer);
   document.removeEventListener('pointermove',pMove); document.removeEventListener('pointerup',pUp); document.removeEventListener('pointercancel',pUp);
-  const wasArmed=press.armed, moved=press.moved, idx=press.idx; press=null;
-  if(wasArmed){ endDrag(); } else if(!moved&&e.type==='pointerup'){ openLightbox(idx); }
+  const wasArmed=press.armed, moved=press.moved, idx=press.idx, card=press.card; press=null;
+  if(wasArmed){ endDrag(); }
+  else if(!moved&&e.type==='pointerup'){ if(selMode) toggleSelect(card, photos[idx].id); else openLightbox(idx); }
 }
+
+/* ── 多選 / 批次刪除（類似 iPhone 相簿） ── */
+let selMode=false; const selected=new Set();
+function enterSel(){ selMode=true; selected.clear(); document.body.classList.add('selmode'); $('selBtn').textContent='取消選取'; updateSelBar(); }
+function exitSel(){ selMode=false; selected.clear(); document.body.classList.remove('selmode'); $('selBtn').textContent='☑️ 選取'; [...$('grid').children].forEach(c=>c.classList.remove('selected')); }
+$('selBtn').onclick=()=>{ if(!photos.length){ toast('還沒有照片'); return; } selMode?exitSel():enterSel(); };
+function toggleSelect(card,id){ if(selected.has(id)){ selected.delete(id); card.classList.remove('selected'); } else { selected.add(id); card.classList.add('selected'); } updateSelBar(); }
+function updateSelBar(){ $('selCount').textContent='已選 '+selected.size+' 張'; $('selDel').disabled=selected.size===0;
+  $('selAll').textContent=(selected.size===photos.length&&photos.length>0)?'取消全選':'全選'; }
+$('selAll').onclick=()=>{ const all=selected.size===photos.length&&photos.length>0; selected.clear();
+  [...$('grid').children].forEach(c=>{ if(all)c.classList.remove('selected'); else { selected.add(c.dataset.id); c.classList.add('selected'); } }); updateSelBar(); };
+$('selCancel').onclick=exitSel;
+$('selDel').onclick=async()=>{
+  if(!selected.size)return;
+  if(!confirm('刪除選取的 '+selected.size+' 張照片？此動作無法復原。'))return;
+  const ids=[...selected];
+  photos=photos.filter(p=>!selected.has(p.id)); sig=photos.map(p=>p.id).join(','); lastMutate=Date.now();
+  exitSel(); renderPhotos();
+  try{ await api('/api/delete_many?album='+encodeURIComponent(curAlbum),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ids)}); toast('已刪除 '+ids.length+' 張'); }
+  catch(_){ toast('刪除失敗'); }
+  loadPhotos(true);
+};
 function beginDrag(card,x,y,pid){
   const r=card.getBoundingClientRect(); const clone=card.cloneNode(true); clone.className='card drag-clone';
   clone.style.width=r.width+'px'; clone.style.height=r.height+'px'; clone.style.left=r.left+'px'; clone.style.top=r.top+'px';
@@ -286,7 +331,7 @@ lbstage.addEventListener('pointerup',endPtr); lbstage.addEventListener('pointerc
 addEventListener('keydown',e=>{ if(!lbOpen)return; if(e.key==='Escape')closeLb(); else if(e.key==='ArrowRight')lbGo(1); else if(e.key==='ArrowLeft')lbGo(-1); });
 
 let toastT=null; function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
-async function poll(){ if(drag||press||lbOpen)return; if(Date.now()-lastMutate<2500)return; if(curAlbum)await loadPhotos(false); else await loadAlbums(); }
+async function poll(){ if(drag||press||lbOpen||selMode)return; if(Date.now()-lastMutate<2500)return; if(curAlbum)await loadPhotos(false); else await loadAlbums(); }
 setInterval(poll,4000); route();
 </script>
 </body>
