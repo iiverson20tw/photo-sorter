@@ -110,6 +110,7 @@
       <button class="btn primary" id="addBtn">＋ 加入照片</button>
       <button class="btn ghost" id="selBtn">☑️ 選取</button>
       <button class="btn ghost" id="sortBtn">📅 時間排序（舊→新）</button>
+      <button class="btn ghost" id="dlBtn">⬇️ 下載相簿</button>
       <button class="btn ghost" id="copyBtn">📋 複製順序</button>
       <button class="btn ghost" id="renameBtn">✏️ 改名</button>
       <button class="btn ghost danger" id="delAlbumBtn">🗑 刪相簿</button>
@@ -205,6 +206,12 @@ $('renameBtn').onclick=async()=>{ const name=prompt('相簿改名：',curName); 
   try{ await api('/api/album/rename?id='+encodeURIComponent(curAlbum),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.trim()})}); curName=name.trim()||curName; $('title').textContent=curName; toast('已改名'); }catch(_){ toast('改名失敗'); } };
 $('delAlbumBtn').onclick=async()=>{ if(!confirm('刪除相簿「'+curName+'」會連同裡面 '+photos.length+' 張照片一起刪掉，確定？'))return;
   try{ await api('/api/album/delete?id='+encodeURIComponent(curAlbum),{method:'POST'}); toast('已刪除相簿'); location.hash=''; }catch(_){ toast('刪除失敗'); } };
+$('dlBtn').onclick=()=>{
+  if(!photos.length){ toast('還沒有照片'); return; }
+  toast('開始下載…檔名已加編號（001_、002_…），照名稱排序就是你排的順序');
+  const a=document.createElement('a'); a.href='/api/download?album='+encodeURIComponent(curAlbum);
+  document.body.appendChild(a); a.click(); a.remove();
+};
 $('sortBtn').onclick=async()=>{
   if(!photos.length){ toast('還沒有照片'); return; }
   if(!confirm('把這 '+photos.length+' 張重新排序成「舊 → 新」？\n\n排序依據（自動判斷）：\n① 有拍攝時間的照片 → 用拍攝時間\n② 沒有拍攝時間的 → 用檔名編號\n（iPhone 的 IMG_1234 檔名就是拍攝先後順序）\n\n⚠️ 會覆蓋你目前手動排的順序。'))return;

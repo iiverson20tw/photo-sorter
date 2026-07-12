@@ -12,7 +12,8 @@
 """
 import sys, os, json, threading, io, mimetypes, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
+import zipfile, tempfile
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 UP   = os.path.join(ROOT, 'uploads')
@@ -183,6 +184,39 @@ class H(BaseHTTPRequestHandler):
             if ph is None: return self._json({"error": "no such album"}, 404)
             al = d['albums'][aid]
             return self._json({"album": {"id": aid, "name": al['name']}, "photos": ph})
+        if path == '/api/download':
+            aid = q.get('album', [''])[0]
+            with LOCK: d = _load(); al = d['albums'].get(aid)
+            if not al: return self._send(404, b'no album', 'text/plain')
+            order = list(al['order']); items = dict(d['items']); name = al['name']
+            width = max(3, len(str(len(order))))
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.zip'); tmp.close()
+            try:
+                with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_STORED) as z:
+                    for i, pid in enumerate(order):
+                        it = items.get(pid)
+                        if not it: continue
+                        src = os.path.join(UP, it['file'])
+                        if not os.path.isfile(src): continue
+                        base = os.path.basename(it.get('name') or it['file']) or it['file']
+                        z.write(src, str(i + 1).zfill(width) + '_' + base)   # 前綴編號＝排好的順序
+                size = os.path.getsize(tmp.name)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Length', str(size))
+                fn = quote(((name or 'album') + '.zip'))
+                self.send_header('Content-Disposition', "attachment; filename=\"album.zip\"; filename*=UTF-8''" + fn)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                with open(tmp.name, 'rb') as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk: break
+                        self.wfile.write(chunk)
+            finally:
+                try: os.remove(tmp.name)
+                except Exception: pass
+            return
         if path.startswith('/thumb/'):
             fn = os.path.basename(unquote(path[len('/thumb/'):]))
             src = os.path.join(UP, fn)
