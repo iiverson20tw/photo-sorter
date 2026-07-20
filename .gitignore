@@ -5,3 +5,5 @@ data.json.*
 cf.log
 *.log
 __pycache__/
+.auth_pin
+.auth_secret

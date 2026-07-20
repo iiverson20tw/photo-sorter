@@ -14,6 +14,7 @@ import sys, os, json, threading, io, mimetypes, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote, quote
 import zipfile, tempfile
+import hmac, hashlib, secrets, time, http.cookies
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 UP   = os.path.join(ROOT, 'uploads')
@@ -24,6 +25,119 @@ os.makedirs(THUMBS, exist_ok=True)
 THUMB_MAX = 420
 LOCK = threading.Lock()
 MAXBODY = 40 * 1024 * 1024
+
+# ===== 密碼保護 =====
+# PIN 與簽章密鑰都存在「不進 git 的檔案」裡（repo 是 public，寫死在原始碼等於公開密碼）
+PIN_FILE    = os.path.join(ROOT, '.auth_pin')
+SECRET_FILE = os.path.join(ROOT, '.auth_secret')
+COOKIE   = 'ps_auth'
+MAX_AGE  = 30 * 24 * 3600          # 記住登入 30 天
+FAIL_MAX = 8                       # 同一 IP 連錯 8 次
+FAIL_LOCK = 300                    # 鎖 5 分鐘
+_FAILS = {}                        # ip -> [錯誤次數, 解鎖時間]
+_FAIL_LOCK = threading.Lock()
+
+
+def _read_or_create(path, default_factory):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            v = f.read().strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    v = default_factory()
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(v)
+    except Exception:
+        pass
+    return v
+
+
+# 預設值故意用「隨機」而非真實密碼——repo 是 public，寫死真密碼等於公開。
+# 真實密碼放在不進 git 的 .auth_pin，或用環境變數 PHOTO_PIN 覆蓋。
+# 首次啟動若沒有 .auth_pin，會自動產生一組隨機密碼寫進該檔，自行打開查看/修改。
+PIN    = os.environ.get('PHOTO_PIN') or _read_or_create(PIN_FILE, lambda: secrets.token_hex(4))
+SECRET = _read_or_create(SECRET_FILE, lambda: secrets.token_hex(32)).encode('utf-8')
+
+
+def _token():
+    """cookie 值＝用密鑰簽出來的固定 token，別人猜不到也偽造不了。"""
+    return hmac.new(SECRET, b'ps_auth_v1', hashlib.sha256).hexdigest()
+
+
+def _fail_state(ip):
+    """回傳 (是否鎖定中, 還要等幾秒)。"""
+    with _FAIL_LOCK:
+        st = _FAILS.get(ip)
+        if not st:
+            return False, 0
+        if st[1] > time.time():
+            return True, int(st[1] - time.time())
+        if st[1]:                      # 鎖定已過期，重新計數
+            _FAILS.pop(ip, None)
+        return False, 0
+
+
+def _fail_add(ip):
+    with _FAIL_LOCK:
+        st = _FAILS.setdefault(ip, [0, 0])
+        st[0] += 1
+        if st[0] >= FAIL_MAX:
+            st[1] = time.time() + FAIL_LOCK
+            st[0] = 0
+
+
+def _fail_clear(ip):
+    with _FAIL_LOCK:
+        _FAILS.pop(ip, None)
+
+
+LOGIN_PAGE = """<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>我的相簿 · 請輸入密碼</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100dvh;display:flex;align-items:center;justify-content:center;
+ background:#0f1020;font-family:"Microsoft JhengHei","PingFang TC",system-ui,sans-serif;padding:24px}
+.box{width:100%;max-width:340px;text-align:center}
+.logo{font-size:2.6rem}
+h1{color:#fff;font-size:1.15rem;margin:12px 0 4px;font-weight:800}
+p{color:#8b8fb5;font-size:.82rem;margin-bottom:22px}
+input{width:100%;padding:15px;border-radius:12px;border:1px solid #2b2d52;background:#181a33;
+ color:#fff;font-size:1.5rem;text-align:center;letter-spacing:.7rem;outline:none;font-family:inherit}
+input:focus{border-color:#5b4bdb}
+button{width:100%;margin-top:12px;padding:14px;border:none;border-radius:12px;
+ background:#5b4bdb;color:#fff;font-size:1rem;font-weight:700;cursor:pointer;font-family:inherit}
+button:disabled{opacity:.5}
+.err{color:#ff7a90;font-size:.85rem;margin-top:14px;min-height:1.2em}
+</style></head><body>
+<div class="box">
+  <div class="logo">📚</div>
+  <h1>我的相簿</h1>
+  <p>請輸入密碼</p>
+  <form id="f">
+    <input id="pin" type="password" inputmode="numeric" autocomplete="current-password"
+           placeholder="••••" autofocus>
+    <button type="submit">進入相簿</button>
+  </form>
+  <div class="err" id="err"></div>
+</div>
+<script>
+var f=document.getElementById('f'),pin=document.getElementById('pin'),err=document.getElementById('err');
+f.onsubmit=function(e){
+  e.preventDefault(); err.textContent='';
+  fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({pin:pin.value})})
+   .then(function(r){return r.json()})
+   .then(function(j){
+     if(j.ok){ location.replace('/'); }
+     else if(j.locked){ err.textContent='錯太多次了，請 '+j.wait+' 秒後再試'; }
+     else { err.textContent='密碼不對'; pin.value=''; pin.focus(); }
+   })
+   .catch(function(){ err.textContent='連線失敗'; });
+};
+</script></body></html>"""
 
 try:
     import pillow_heif; from PIL import Image
@@ -166,8 +280,39 @@ class H(BaseHTTPRequestHandler):
             buf += chunk
         return buf
 
+    # ---- 密碼守門 ----
+    def _client_ip(self):
+        return (self.headers.get('CF-Connecting-IP')
+                or self.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+                or self.client_address[0])
+
+    def _authed(self):
+        raw = self.headers.get('Cookie')
+        if not raw:
+            return False
+        try:
+            c = http.cookies.SimpleCookie(raw)
+        except Exception:
+            return False
+        m = c.get(COOKIE)
+        return bool(m) and hmac.compare_digest(m.value, _token())
+
+    def _gate(self, path):
+        """未登入就擋下來。回 True 表示已處理（呼叫端要 return）。"""
+        if path in ('/login', '/api/login') or self._authed():
+            return False
+        if path in ('/', '/index.html', '/login'):
+            self._send(200, LOGIN_PAGE.encode('utf-8'), 'text/html; charset=utf-8')
+        else:
+            self._json({"error": "unauthorized"}, 401)
+        return True
+
     def do_GET(self):
         u = urlparse(self.path); path = u.path; q = parse_qs(u.query)
+        if self._gate(path):
+            return
+        if path == '/login':
+            return self._send(200, LOGIN_PAGE.encode('utf-8'), 'text/html; charset=utf-8')
         if path in ('/', '/index.html'):
             try:
                 with open(os.path.join(ROOT, 'index.html'), 'rb') as f: b = f.read()
@@ -251,6 +396,25 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path); path = u.path; q = parse_qs(u.query)
+        if path == '/api/login':
+            ip = self._client_ip()
+            locked, wait = _fail_state(ip)
+            if locked:
+                return self._json({"ok": False, "locked": True, "wait": wait}, 429)
+            try:
+                pin = str((json.loads(self._read_body() or b'{}') or {}).get('pin', ''))
+            except Exception:
+                pin = ''
+            if hmac.compare_digest(pin, PIN):
+                _fail_clear(ip)
+                return self._send(200, b'{"ok":true}',
+                                  extra={'Set-Cookie':
+                                         '%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax'
+                                         % (COOKIE, _token(), MAX_AGE)})
+            _fail_add(ip)
+            return self._json({"ok": False}, 401)
+        if self._gate(path):
+            return
 
         if path == '/api/album/create':
             raw = self._read_body() or b'{}'
