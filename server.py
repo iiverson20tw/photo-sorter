@@ -55,7 +55,9 @@ def _read_or_create(path, default_factory):
     return v
 
 
-PIN    = os.environ.get('PHOTO_PIN') or _read_or_create(PIN_FILE, lambda: '2632')
+# 預設值故意用「隨機」而非真實密碼——repo 是 public，寫死真密碼等於公開。
+# 真實密碼放在不進 git 的 .auth_pin（本機已是 2632），或用環境變數 PHOTO_PIN 覆蓋。
+PIN    = os.environ.get('PHOTO_PIN') or _read_or_create(PIN_FILE, lambda: secrets.token_hex(4))
 SECRET = _read_or_create(SECRET_FILE, lambda: secrets.token_hex(32)).encode('utf-8')
 
 
