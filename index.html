@@ -93,6 +93,48 @@
   .lbnav.prev{left:0;border-radius:0 12px 12px 0;} .lbnav.next{right:0;border-radius:12px 0 0 12px;}
   #lbdate{position:absolute;bottom:calc(42px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:#fff;font-size:14px;font-weight:700;z-index:2;pointer-events:none;text-shadow:0 1px 6px rgba(0,0,0,.8);}
   .lbtip{position:absolute;bottom:calc(16px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(255,255,255,.7);font-size:12px;z-index:2;pointer-events:none;}
+
+  /* ===== 列印：只印照片，網頁上的字/ 按鈕 / 底色一律不印 ===== */
+  @media print{
+    /* 邊界改由內容自己 padding 撐，@page 設 0；
+       否則 100vh(整頁高) 會超出「扣掉邊界後的可印區」而多印一頁空白 */
+    @page{ margin:0; }
+    html,body{ background:#fff !important; height:auto !important; overflow:visible !important; }
+    /* 一律不印的介面元素 */
+    header, #banner, #toast, #selBar, .hint, .empty, .btn, button,
+    .albumbar, .topbar, input, #lbnum, #lbdate, .lbtip, .lbnav, .lbacts,
+    .lbtop, .num, .date, .check{ display:none !important; }
+
+    /* A. 大圖開著 → 整頁只印那一張，置中撐滿一頁 */
+    body.printing-one > *{ display:none !important; }
+    body.printing-one{ margin:0 !important; padding:0 !important; }
+    body.printing-one #lightbox{
+      display:flex !important; position:static !important; inset:auto !important;
+      background:#fff !important; align-items:center; justify-content:center;
+      width:100%; height:100vh; overflow:hidden !important;   /* 鎖成一頁高，避免溢出第二頁 */
+      margin:0 !important; padding:8mm !important; box-sizing:border-box !important;
+    }
+    body.printing-one #lbstage{
+      position:static !important; transform:none !important;
+      width:auto !important; height:auto !important; display:block !important;
+    }
+    body.printing-one #lbimg{
+      transform:none !important; max-width:100% !important; max-height:100% !important;
+      width:auto !important; height:auto !important; object-fit:contain !important;
+      page-break-inside:avoid; break-inside:avoid;
+    }
+
+    /* B. 沒開大圖 → 印照片牆（純圖，無編號無日期無外框） */
+    body:not(.printing-one) #lightbox{ display:none !important; }
+    #grid{ display:grid !important; grid-template-columns:repeat(3,1fr) !important;
+           gap:4mm !important; padding:8mm !important; }
+    #grid .card{
+      break-inside:avoid; page-break-inside:avoid; box-shadow:none !important;
+      border:none !important; background:none !important; border-radius:0 !important;
+      transform:none !important; opacity:1 !important;
+    }
+    #grid .card img{ width:100% !important; height:auto !important; object-fit:contain !important; }
+  }
 </style>
 </head>
 <body>
@@ -351,6 +393,14 @@ function resetLb(){ sc=1; tx=0; ty=0; applyLb(); }
 function openLightbox(i){ lbIdx=i; lbOpen=true; $('lightbox').classList.add('show'); loadLb(); }
 function loadLb(){ const p=photos[lbIdx]; if(!p){ closeLb(); return; } lbimg.src=p.url; $('lbnum').textContent=(lbIdx+1)+' / '+photos.length; $('lbdate').textContent=p.taken?('📅 '+fmtDateTime(p.taken)):''; resetLb(); }
 function closeLb(){ lbOpen=false; $('lightbox').classList.remove('show'); }
+
+// 列印：大圖開著就只印那一張，否則印整面照片牆（樣式見 @media print）
+window.addEventListener('beforeprint', function(){
+  document.body.classList.toggle('printing-one', !!lbOpen);
+});
+window.addEventListener('afterprint', function(){
+  document.body.classList.remove('printing-one');
+});
 function syncLightbox(){ if(lbIdx>=photos.length)lbIdx=photos.length-1; if(lbIdx<0){closeLb();return;} $('lbnum').textContent=(lbIdx+1)+' / '+photos.length; }
 function lbGo(d){ const n=lbIdx+d; if(n<0||n>=photos.length)return; lbIdx=n; loadLb(); }
 $('lbclose').onclick=closeLb;
